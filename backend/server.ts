@@ -13,6 +13,7 @@ dns.setDefaultResultOrder('ipv4first');
 dns.setServers(['8.8.8.8', '8.8.4.4']); // Fix local ISP blocking MongoDB SRV records
 
 import { User, Product, Profile, getModel } from './models';
+import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
 
@@ -119,7 +120,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     const newUser = await User.create({ email, password: hashedPassword });
     
-    const token = jwt.sign({ uid: newUser._id.toString(), email: newUser.email }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ uid: newUser._id.toString(), email: newUser.email }, JWT_SECRET, { expiresIn: '7d' });
     
     res.status(201).json({ token, user: { uid: newUser._id.toString(), email: newUser.email } });
   } catch (error: any) {
@@ -142,7 +143,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ uid: user._id.toString(), email: user.email }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ uid: user._id.toString(), email: user.email }, JWT_SECRET, { expiresIn: '7d' });
     
     res.json({ token, user: { uid: user._id.toString(), email: user.email } });
   } catch (error: any) {
@@ -269,6 +270,68 @@ app.put('/api/profile', verifyToken, async (req, res) => {
     res.json({ message: 'Profile updated successfully' });
   } catch (error) { res.status(500).json({ error: 'Failed to update profile' }); }
 });
+
+// =======================
+// GEMINI AI PREDICTIONS
+// =======================
+
+app.post('/api/ai/predict-restock', verifyToken, async (req, res) => {
+  try {
+    const { products, sales } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(400).json({ 
+        error: "GEMINI_API_KEY is not configured in backend/.env",
+        fallback: true
+      });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `You are an expert AI retail inventory forecasting specialist.
+Analyze the following store inventory and sales log:
+
+Current Products:
+${JSON.stringify((products || []).map((p: any) => ({ name: p.name, category: p.category, stock: p.quantity, price: p.price, expiry_date: p.expiry_date })), null, 2)}
+
+Recent Sales:
+${JSON.stringify((sales || []).map((s: any) => ({ product_name: s.product_name, quantity: s.quantity, created_at: s.created_at })), null, 2)}
+
+Provide intelligent, proactive restocking recommendations. Focus on items running low, high sales velocity, or items with high demand risk.
+Return ONLY valid JSON matching this schema (no markdown, no backticks):
+{
+  "summary": "Brief 1-2 sentence overall supply chain health summary",
+  "recommendations": [
+    {
+      "name": "Product Name",
+      "stock": 5,
+      "avgDaily": 2.5,
+      "daysUntilEmpty": 2,
+      "urgency": "critical" | "high" | "medium",
+      "recommendedOrderQty": 35,
+      "aiReasoning": "Concise explanation of why and by when to reorder"
+    }
+  ]
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
+
+    const text = response.text || "{}";
+    const parsed = JSON.parse(text);
+    return res.json(parsed);
+  } catch (error: any) {
+    console.error("Gemini AI Prediction Error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate AI predictions" });
+  }
+});
+
 
 // =======================
 // ADMIN ROUTES

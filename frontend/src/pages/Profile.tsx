@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   User, Phone, Mail, MapPin, Home, Settings, ShieldCheck, Bell,
-  Camera, Save, Loader2, Plus, X, AlertCircle, CheckCircle2, Eye, EyeOff, Lock, LocateFixed
+  Camera, Save, Loader2, Plus, X, AlertCircle, CheckCircle2, Eye, EyeOff, Lock, LocateFixed, LogOut
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 // import { reauthenticateWithCredential, updatePassword, EmailAuthProvider, signInWithEmailAndPassword } from "firebase/auth";
 // import { auth } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -58,7 +59,18 @@ export default function Profile() {
   const upsert = useUpsertProfile();
   const uploadPicture = useUploadProfilePicture();
   const { signOut, user } = useAuth();
+  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      toast.success("Logged out successfully");
+      navigate("/auth", { replace: true });
+    } catch (err: any) {
+      toast.error(err?.message || "Logout failed");
+    }
+  };
 
   // Form state
   const [name, setName] = useState("");
@@ -490,12 +502,22 @@ export default function Profile() {
           <h1 className="page-title">Profile</h1>
           <p className="page-subtitle">Manage your account, shop details and preferences</p>
         </div>
-        {hasUnsavedChanges && (
-          <div className="flex items-center gap-2 text-sm text-amber-600">
-            <AlertCircle className="h-4 w-4" />
-            <span>Unsaved changes</span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {hasUnsavedChanges && (
+            <div className="flex items-center gap-2 text-sm text-amber-600">
+              <AlertCircle className="h-4 w-4" />
+              <span>Unsaved changes</span>
+            </div>
+          )}
+          <Button
+            variant="outline"
+            className="text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/20 gap-2"
+            onClick={handleLogout}
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Log Out</span>
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -630,6 +652,16 @@ export default function Profile() {
                         Save Profile
                       </>
                     )}
+                  </Button>
+
+                  {/* Log Out Button */}
+                  <Button
+                    variant="ghost"
+                    className="w-full mt-2 text-destructive hover:text-destructive hover:bg-destructive/10 gap-2 border border-destructive/20"
+                    onClick={handleLogout}
+                  >
+                    <LogOut className="h-4 w-4" />
+                    <span>Log Out</span>
                   </Button>
                 </div>
               </div>

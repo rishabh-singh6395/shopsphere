@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Package, AlertTriangle, TrendingUp, ShoppingBag, Clock, Sparkles } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Package, AlertTriangle, TrendingUp, ShoppingBag, Clock, Sparkles, Bot, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { useProducts, useSales } from "@/hooks/useData";
 import { motion, Variants } from "framer-motion";
 import CountUp from "react-countup";
+import { API_BASE_URL } from "@/config";
+import { getAuthToken } from "@/contexts/AuthContext";
 
 function getExpiryDetails(expiryDate: string) {
   const diff = Math.ceil((new Date(expiryDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
@@ -34,16 +36,28 @@ function RecommendationItem({ rec, dayText, orderQty }: { rec: any, dayText: str
   return (
     <div className="bg-background/80 backdrop-blur-sm border border-border p-4 rounded-xl shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
       <div>
-        <div className="font-semibold text-foreground mb-1 text-base">{rec.name}</div>
-        <div className="text-xs text-muted-foreground mb-3">
-          You sell ~{rec.avgDaily.toFixed(1)}/day. Current stock: {rec.stock}
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="font-semibold text-foreground text-base truncate">{rec.name}</div>
+          {rec.urgency && (
+            <Badge variant={rec.urgency === 'critical' ? 'destructive' : 'secondary'} className="text-[10px] uppercase">
+              {rec.urgency}
+            </Badge>
+          )}
         </div>
-        <div className="text-sm mb-1">
-          Will run out by <span className="font-semibold text-rose-500">{dayText}</span>
+        <div className="text-xs text-muted-foreground mb-2">
+          Velocity: ~{rec.avgDaily?.toFixed(1)}/day • Current: {rec.stock} units
         </div>
+        <div className="text-sm mb-2">
+          Runs out by <span className="font-semibold text-rose-500">{dayText}</span>
+        </div>
+        {rec.aiReasoning && (
+          <div className="text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/40 p-2 rounded-md mb-2">
+            💡 {rec.aiReasoning}
+          </div>
+        )}
       </div>
-      <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">Suggested: {orderQty} units</span>
+      <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">Order: {orderQty} units</span>
         <Button 
           size="sm" 
           className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs px-3 shadow-sm transition-all"
@@ -107,6 +121,51 @@ export default function Dashboard() {
     .filter(r => r.avgDaily > 0.1 && r.daysUntilEmpty <= 14) // Only show items running out in <= 14 days
     .sort((a, b) => a.daysUntilEmpty - b.daysUntilEmpty)
     .slice(0, 3); // Top 3 most urgent
+
+  const [geminiData, setGeminiData] = useState<{ summary?: string; recommendations?: any[] } | null>(null);
+  const [loadingAi, setLoadingAi] = useState(false);
+
+  useEffect(() => {
+    if (products.length === 0) return;
+
+    let isMounted = true;
+    async function fetchGeminiPredictions() {
+      try {
+        setLoadingAi(true);
+        const token = await getAuthToken();
+        const res = await fetch(`${API_BASE_URL}/ai/predict-restock`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            products: products.slice(0, 30),
+            sales: sales.slice(0, 50)
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.recommendations) {
+            setGeminiData(data);
+          }
+        }
+      } catch (err) {
+        console.warn("Gemini API not available, using algorithmic calculations", err);
+      } finally {
+        if (isMounted) setLoadingAi(false);
+      }
+    }
+
+    fetchGeminiPredictions();
+    return () => { isMounted = false; };
+  }, [products.length, sales.length]);
+
+  // Combine Gemini recommendations with statistical fallback
+  const displayRecommendations = (geminiData?.recommendations && geminiData.recommendations.length > 0)
+    ? geminiData.recommendations.slice(0, 3)
+    : aiRecommendations;
 
   const alertProducts = products.filter(p => {
     const { daysLeft } = getExpiryDetails(p.expiry_date);
@@ -227,7 +286,7 @@ export default function Dashboard() {
       </motion.div>
 
       {/* AI Demand Forecasting */}
-      {aiRecommendations.length > 0 && (
+      {displayRecommendations.length > 0 && (
         <motion.div variants={container} initial="hidden" animate="show" className="mb-8">
           <motion.div variants={item}>
             <Card className="border-indigo-500/30 shadow-md bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent relative overflow-hidden">
@@ -235,22 +294,34 @@ export default function Dashboard() {
                 <Sparkles className="h-32 w-32 text-indigo-500" />
               </div>
               <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
-                  <Sparkles className="h-5 w-5" />
-                  AI Predictive Restocking
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">Based on your recent sales velocity, here is what you need to order before you run out.</p>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                    <Sparkles className="h-5 w-5" />
+                    AI Predictive Restocking
+                  </CardTitle>
+                  {geminiData?.recommendations ? (
+                    <Badge variant="outline" className="border-indigo-500 text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5 text-xs py-1">
+                      <Bot className="h-3.5 w-3.5" /> Powered by Gemini
+                    </Badge>
+                  ) : loadingAi ? (
+                    <Badge variant="secondary" className="flex items-center gap-1.5 text-xs py-1">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Analyzing with Gemini...
+                    </Badge>
+                  ) : null}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {geminiData?.summary || "Based on your real-time sales velocity and inventory patterns, here is what you need to order before you run out."}
+                </p>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {aiRecommendations.map(rec => {
-                    const runOutDate = new Date(nowTime + rec.daysUntilEmpty * 24 * 60 * 60 * 1000);
-                    // Use tomorrow/today if applicable, otherwise weekday
+                  {displayRecommendations.map(rec => {
+                    const runOutDate = new Date(nowTime + (rec.daysUntilEmpty || 1) * 24 * 60 * 60 * 1000);
                     let dayText = runOutDate.toLocaleDateString('en-US', { weekday: 'long' });
-                    if (rec.daysUntilEmpty <= 1) dayText = "Tomorrow";
-                    if (rec.daysUntilEmpty <= 0.2) dayText = "Today";
+                    if ((rec.daysUntilEmpty || 0) <= 1) dayText = "Tomorrow";
+                    if ((rec.daysUntilEmpty || 0) <= 0.2) dayText = "Today";
 
-                    const orderQty = Math.ceil(rec.avgDaily * 14); // order for 14 days
+                    const orderQty = rec.recommendedOrderQty || Math.ceil((rec.avgDaily || 1) * 14);
                     
                     return (
                       <RecommendationItem key={rec.name} rec={rec} dayText={dayText} orderQty={orderQty} />

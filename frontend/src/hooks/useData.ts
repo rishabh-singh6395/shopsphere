@@ -683,7 +683,8 @@ export function useCreateTransferRequest() {
       requested_quantity: number;
       notes?: string;
     }) => {
-      if (!user || !profile) throw new Error("User not authenticated");
+      const token = await getAuthToken();
+      if (!user || !token) throw new Error("Please log in again to send requests");
 
       const listingDoc = await getDoc(doc(db, "surplus_listings", request.surplus_listing_id));
       const listing = listingDoc.data() as SurplusListing;
@@ -691,7 +692,7 @@ export function useCreateTransferRequest() {
       const now = new Date().toISOString();
       const data = {
         requester_shop_user_id: user.uid,
-        requester_shop_name: profile.shop_name || profile.owner_name || "My Shop",
+        requester_shop_name: profile?.shop_name || profile?.owner_name || user.email?.split("@")[0] || "My Shop",
         supplier_shop_user_id: listing.shop_user_id,
         supplier_shop_name: listing.shop_name,
         product_id: listing.product_id,
@@ -794,13 +795,19 @@ export function useCreateStockPurchaseRequest() {
 
   return useMutation({
     mutationFn: async (request: { to_shop: any; product_id: string; product_name: string; product_category: string; quantity: number; proposed_price: number; notes?: string }) => {
-      if (!user || !profile) throw new Error("User not authenticated");
+      const token = await getAuthToken();
+      if (!user || !token) throw new Error("Please log in again to send requests");
+
+      const senderShopName = profile?.shop_name || profile?.owner_name || user.email?.split("@")[0] || "My Shop";
+      const receiverShopName = request.to_shop?.shop_name || request.to_shop?.owner_name || "Shop";
+      const receiverUserId = request.to_shop?.user_id || request.to_shop?.id;
+
       const now = new Date().toISOString();
       const data = {
         from_shop_user_id: user.uid,
-        from_shop_name: profile.shop_name || profile.owner_name || "My Shop",
-        to_shop_user_id: request.to_shop.user_id,
-        to_shop_name: request.to_shop.shop_name || request.to_shop.owner_name || "Shop",
+        from_shop_name: senderShopName,
+        to_shop_user_id: receiverUserId,
+        to_shop_name: receiverShopName,
         product_id: request.product_id,
         product_name: request.product_name,
         product_category: request.product_category,

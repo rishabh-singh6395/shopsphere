@@ -144,47 +144,79 @@ export default function SmartChatAssistant({ listings }: SmartChatAssistantProps
       setPendingReservation(null);
     }
 
-    // Extract keywords (very basic extraction)
-    // Remove common words
-    const stopWords = ["who", "has", "looking", "for", "i", "need", "want", "some", "near", "me", "where", "can", "get", "find", "a", "an", "the"];
-    const keywords = q.split(" ").filter(w => !stopWords.includes(w) && w.length > 2);
-    
-    let searchWord = keywords.length > 0 ? keywords[0] : q;
+    // Extract keywords
+    const stopWords = new Set([
+      "who", "has", "looking", "for", "i", "need", "want", "some", "near", "me",
+      "where", "can", "get", "find", "a", "an", "the", "is", "there", "any", "do",
+      "you", "have", "please", "show", "tell", "available"
+    ]);
 
-    // Search listings
-    const results = listings.filter(
-      (l) =>
-        (l.name?.toLowerCase().includes(searchWord) ||
-        l.category?.toLowerCase().includes(searchWord)) && l.quantity > 0
-    );
+    // Handle common greetings or general help
+    if (q === "hi" || q === "hello" || q === "hey" || q.includes("help")) {
+      const reply = "Hello! I can help you search local shops for products, check current stock levels, and reserve items for pickup. What item are you looking for today?";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          sender: "bot",
+          text: reply,
+          timestamp: new Date(),
+        },
+      ]);
+      speakText(reply);
+      return;
+    }
+
+    const words = q.replace(/[^\w\s]/g, "").split(/\s+/).filter(Boolean);
+    const keywords = words.filter(w => !stopWords.has(w) && w.length >= 2);
+
+    // Search listings by matching ANY keyword or full query
+    const results = listings.filter((l) => {
+      if (!l || (l.quantity !== undefined && l.quantity <= 0)) return false;
+      const name = (l.name || "").toLowerCase();
+      const cat = (l.category || "").toLowerCase();
+      const shop = (l.shop_name || "").toLowerCase();
+
+      // Direct match
+      if (name.includes(q) || cat.includes(q) || shop.includes(q)) return true;
+
+      // Keyword match
+      if (keywords.length > 0) {
+        return keywords.some(k => name.includes(k) || cat.includes(k) || shop.includes(k));
+      }
+      return false;
+    });
 
     if (results.length > 0) {
       // Find the closest or first available
       const topResult = results[0];
       setPendingReservation(topResult);
 
+      const reply = `${topResult.shop_name || "A local shop"} has ${topResult.quantity} units of ${topResult.name} in stock for ₹${topResult.price}.\n\nReply '1' to reserve it, or click below to view the shop!`;
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now().toString(),
           sender: "bot",
-          text: `${topResult.shop_name || "A local shop"} has ${topResult.quantity} units of ${topResult.name} in stock for ₹${topResult.price}.\n\nReply '1' to reserve it, or click below to view the shop!`,
-          options: [topResult],
+          text: reply,
+          options: results.slice(0, 3),
           timestamp: new Date(),
         },
       ]);
-      speakText(`${topResult.shop_name || "A local shop"} has ${topResult.quantity} units of ${topResult.name} in stock for ₹${topResult.price}. Reply '1' to reserve it.`);
+      speakText(`${topResult.shop_name || "A local shop"} has ${topResult.quantity} units of ${topResult.name} in stock for ${topResult.price} rupees. Reply '1' to reserve it.`);
     } else {
+      const displayTerm = keywords.length > 0 ? keywords.join(", ") : q;
+      const reply = `Sorry, I couldn't find any shops nearby with "${displayTerm}". Try searching for another item or category (e.g., Milk, Bread, Rice)!`;
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now().toString(),
           sender: "bot",
-          text: `Sorry, I couldn't find any shops nearby with "${searchWord}". Try searching for something else!`,
+          text: reply,
           timestamp: new Date(),
         },
       ]);
-      speakText(`Sorry, I couldn't find any shops nearby with ${searchWord}. Try searching for something else!`);
+      speakText(`Sorry, I couldn't find any shops nearby with that item. Try searching for something else!`);
     }
   };
 
